@@ -1,0 +1,215 @@
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+extern "C" {
+#include "driverlib/fpu.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/interrupt.h"
+#include "driverlib/timer.h"
+#include "inc/hw_memmap.h"
+#include "Crystalfontz128x128_ST7735.h"
+#include "grlib/grlib.h"
+#include "sysctl_pll.h"
+}
+
+#include "button.h"
+#include "timerLib.h"
+#include "elapsedTime.h"
+
+// ===== Global configuration =====
+static constexpr uint32_t BUTTON_TICK_MS     = 20U;
+static constexpr uint32_t DISPLAY_REFRESH_MS = 50U;
+
+uint32_t gSystemClock = 0;
+volatile uint32_t gStopwatchMs = 0;
+volatile bool gRunning = false;
+
+// ============================================================================
+// STRUCT: Simple GUI Button (for drawing)
+// ============================================================================
+struct MyButton {
+    int x, y, w, h;
+    const char* label;
+    bool pressed;
+};
+
+// One on-screen button: Play / Pause
+static MyButton btnStart = {39, 80, 50, 28, "PLAY", false};
+
+// ============================================================================
+// Hardware button
+// ============================================================================
+static Button btnPlayPause(S1);  // S1 → Play/Pause
+
+// ============================================================================
+// Function prototypes
+// ============================================================================
+static void initializeDisplay(tContext &context);
+static void configureTimer(Timer &timer);
+static void setupButtons();
+static void drawStopwatchScreen(tContext &context, uint32_t currentMs, bool running);
+static void drawButton(tContext &context, const MyButton &btn);
+
+static void onPlayPauseClick();
+static void onPlayPauseRelease();
+
+// ============================================================================
+// MAIN PROGRAM
+// ============================================================================
+int main(void)
+{
+    IntMasterDisable();
+    FPUEnable();
+    FPULazyStackingEnable();
+
+    gSystemClock = SysCtlClockFreqSet(SYSCTL_XTAL_25MHZ | SYSCTL_OSC_MAIN |SYSCTL_USE_PLL | SYSCTL_CFG_VCO_480,120000000);
+
+    tContext sContext;
+    initializeDisplay(sContext);
+
+    Timer timer;
+    configureTimer(timer);
+
+    elapsedMillis buttonTick(timer);
+    elapsedMillis displayTick(timer);
+    elapsedMillis stopwatchTick(timer);
+
+    setupButtons();
+    IntMasterEnable();
+
+    uint32_t lastDisplayedSec = static_cast<uint32_t>(-1);
+    bool lastRunning = !gRunning;
+
+    while (true) {
+        // --- Poll physical button ---
+        if (buttonTick >= BUTTON_TICK_MS) {
+            btnPlayPause.tick();
+            buttonTick = 0;
+        }
+
+        // --- Handle Play/Pause button ---
+        if (btnPlayPause.wasPressed()) {
+            btnStart.pressed = true;
+            onPlayPauseClick();
+        }
+        if (btnPlayPause.wasReleased()) {
+            btnStart.pressed = false;
+            onPlayPauseRelease();
+        }
+
+        // --- Stopwatch logic ---
+        if (gRunning) {
+            uint32_t delta = stopwatchTick;
+            if (delta > 0U) {
+                gStopwatchMs += delta;
+                stopwatchTick = 0;
+            }
+        } else {
+            stopwatchTick = 0;
+        }
+
+        printf("Looping before update\n");
+
+        // --- Update screen if needed ---
+        uint32_t currentSec = gStopwatchMs / 1000U;
+        if ((currentSec != lastDisplayedSec) ||
+            (gRunning != lastRunning) ||
+            (displayTick >= DISPLAY_REFRESH_MS)) {
+
+            printf("Looping\n");
+
+            drawStopwatchScreen(sContext, currentSec, gRunning);
+            drawButton(sContext, btnStart);
+
+            #ifdef GrFlush
+            GrFlush(&sContext);
+            #endif
+
+            lastDisplayedSec = currentSec;
+            lastRunning = gRunning;
+            displayTick = 0;
+        }
+    }
+}
+
+// ============================================================================
+// System configuration
+// ============================================================================
+
+static void initializeDisplay(tContext &context)
+{
+    Crystalfontz128x128_Init();
+    Crystalfontz128x128_SetOrientation(LCD_ORIENTATION_UP);
+    GrContextInit(&context, &g_sCrystalfontz128x128);
+    GrContextFontSet(&context, &g_sFontFixed6x8);
+
+    tRectangle full = {0, 0, 127, 127};
+    GrContextForegroundSet(&context, ClrBlack);
+    GrRectFill(&context, &full);
+}
+
+static void configureTimer(Timer &timer)
+{
+    timer.begin(gSystemClock, TIMER0_BASE);
+}
+
+static void setupButtons()
+{
+    btnPlayPause.begin();
+    btnPlayPause.setTickIntervalMs(BUTTON_TICK_MS);
+    btnPlayPause.setDebounceMs(30);
+}
+
+// ============================================================================
+// Drawing functions
+// ============================================================================
+static void drawStopwatchScreen(tContext &context, uint32_t currentSec, bool running)
+{
+    tRectangle rectFull = {0, 0, 127, 127};
+    GrContextForegroundSet(&context, ClrBlack);
+    GrRectFill(&context, &rectFull);
+
+    // === Draw title "STOPWATCH" at the top ===
+    GrContextForegroundSet(&context, ClrCyan);
+    GrStringDrawCentered(&context, "STOPWATCH", -1, 64, 15, false);
+
+    // Draw seconds counter centered
+    char str[10];
+    snprintf(str, sizeof(str), "%02u s", currentSec);
+
+    GrContextForegroundSet(&context, running ? ClrYellow : ClrOlive);
+    GrStringDrawCentered(&context, str, -1, 64, 50, false);
+}
+
+static void drawButton(tContext &context, const MyButton &btn)
+{
+    uint16_t bgColor = btn.pressed ? ClrBlack : ClrGray;
+    uint16_t textColor = btn.pressed ? ClrWhite : ClrBlack;
+
+    tRectangle rect = {btn.x, btn.y, btn.x + btn.w - 1, btn.y + btn.h - 1};
+    GrContextForegroundSet(&context, bgColor);
+    GrRectFill(&context, &rect);
+
+    GrContextForegroundSet(&context, ClrBlack);
+    GrRectDraw(&context, &rect);
+
+    GrContextForegroundSet(&context, textColor);
+    GrStringDrawCentered(&context, btn.label, -1,
+                         btn.x + btn.w / 2, btn.y + btn.h / 2, false);
+}
+
+// ============================================================================
+// Button callbacks
+// ============================================================================
+static void onPlayPauseClick()
+{
+    gRunning = !gRunning;
+    btnStart.label = gRunning ? "PAUSE" : "PLAY";
+}
+
+static void onPlayPauseRelease()
+{
+    // Optional visual or sound feedback
+}
