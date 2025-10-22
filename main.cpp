@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string>
 
 extern "C" {
 #include "driverlib/fpu.h"
@@ -36,12 +37,14 @@ struct MyButton {
 };
 
 // One on-screen button: Play / Pause
-static MyButton btnStart = {39, 80, 50, 28, "PLAY", false};
+static MyButton btnStart = {0, 80, 50, 28, "PLAY", false};
+static MyButton guiBtnReset = {60, 80, 50, 28, "RESET", false};
 
 // ============================================================================
 // Hardware button
 // ============================================================================
 static Button btnPlayPause(S1);  // S1 → Play/Pause
+static Button btnReset(S2);  // S2 → second button
 
 // ============================================================================
 // Function prototypes
@@ -54,6 +57,8 @@ static void drawButton(tContext &context, const MyButton &btn);
 
 static void onPlayPauseClick();
 static void onPlayPauseRelease();
+static void onResetClick();
+static void onResetRelease();
 
 // ============================================================================
 // MAIN PROGRAM
@@ -83,9 +88,10 @@ int main(void)
     bool lastRunning = !gRunning;
 
     while (true) {
-        // --- Poll physical button ---
+        // --- Poll physical ` ---
         if (buttonTick >= BUTTON_TICK_MS) {
             btnPlayPause.tick();
+            btnReset.tick();
             buttonTick = 0;
         }
 
@@ -99,6 +105,15 @@ int main(void)
             onPlayPauseRelease();
         }
 
+        if (btnReset.wasPressed()) {
+            guiBtnReset.pressed = true;
+            onResetClick();
+        }
+        if (btnReset.wasReleased()) {
+            guiBtnReset.pressed = false;
+            onResetRelease();
+        }
+
         // --- Stopwatch logic ---
         if (gRunning) {
             uint32_t delta = stopwatchTick;
@@ -110,18 +125,15 @@ int main(void)
             stopwatchTick = 0;
         }
 
-        printf("Looping before update\n");
-
         // --- Update screen if needed ---
         uint32_t currentSec = gStopwatchMs / 1000U;
         if ((currentSec != lastDisplayedSec) ||
             (gRunning != lastRunning) ||
             (displayTick >= DISPLAY_REFRESH_MS)) {
 
-            printf("Looping\n");
-
             drawStopwatchScreen(sContext, currentSec, gRunning);
             drawButton(sContext, btnStart);
+            drawButton(sContext, guiBtnReset);
 
             #ifdef GrFlush
             GrFlush(&sContext);
@@ -160,6 +172,10 @@ static void setupButtons()
     btnPlayPause.begin();
     btnPlayPause.setTickIntervalMs(BUTTON_TICK_MS);
     btnPlayPause.setDebounceMs(30);
+
+    btnReset.begin();
+    btnReset.setTickIntervalMs(BUTTON_TICK_MS);
+    btnReset.setDebounceMs(30);
 }
 
 // ============================================================================
@@ -175,12 +191,15 @@ static void drawStopwatchScreen(tContext &context, uint32_t currentSec, bool run
     GrContextForegroundSet(&context, ClrCyan);
     GrStringDrawCentered(&context, "STOPWATCH", -1, 64, 15, false);
 
-    // Draw seconds counter centered
+    // Draw seconds counter and state centered
     char str[10];
     snprintf(str, sizeof(str), "%02u s", currentSec);
+    std::string str2 = running ? "RUNNING" : "STOPPED";
 
     GrContextForegroundSet(&context, running ? ClrYellow : ClrOlive);
     GrStringDrawCentered(&context, str, -1, 64, 50, false);
+
+    GrStringDrawCentered(&context, str2.c_str(), -1, 64, 40, false);
 }
 
 static void drawButton(tContext &context, const MyButton &btn)
@@ -210,6 +229,16 @@ static void onPlayPauseClick()
 }
 
 static void onPlayPauseRelease()
+{
+    // Optional visual or sound feedback
+}
+
+static void onResetClick()
+{
+    gStopwatchMs = 0U;
+}
+
+static void onResetRelease()
 {
     // Optional visual or sound feedback
 }
