@@ -79,7 +79,12 @@ int main(void)
     setupButtons();
     IntMasterEnable();
 
+    // Timer stuff
     uint32_t lastDisplayedSec = static_cast<uint32_t>(-1);
+    uint32_t lastDisplayedMin = static_cast<uint32_t>(-1);
+    uint32_t lastDisplayedHr = static_cast<uint32_t>(-1);
+    uint32_t lastDisplayedMS = static_cast<uint32_t>(-1);
+
     bool lastRunning = !gRunning;
 
     while (true) {
@@ -113,14 +118,17 @@ int main(void)
         printf("Looping before update\n");
 
         // --- Update screen if needed ---
+        // Seconds
         uint32_t currentSec = gStopwatchMs / 1000U;
+        uint32_t currentMin = gStopwatchMs / 60000U;
+        unint32_t currentHr = gStopwatchMs / 3600000U;
+        uint32_t currentMS = gStopwatchMs;
+
         if ((currentSec != lastDisplayedSec) ||
             (gRunning != lastRunning) ||
             (displayTick >= DISPLAY_REFRESH_MS)) {
 
-            printf("Looping\n");
-
-            drawStopwatchScreen(sContext, currentSec, gRunning);
+            drawStopwatchScreen(sContext, currentSec, currentMin, currentHr, currentMS, gRunning);
             drawButton(sContext, btnStart);
 
             #ifdef GrFlush
@@ -131,6 +139,37 @@ int main(void)
             lastRunning = gRunning;
             displayTick = 0;
         }
+
+        // Mins
+        if ((currentMin != lastDisplayedMin) ||
+            (gRunning != lastRunning) ||
+            (displayTick >= DISPLAY_REFRESH_MS)) {
+
+                lastDisplayedMin = currentMin;
+                lastRunning = gRunning;
+                displayTick = 0;
+            }
+
+        // Hours
+        if ((currentHr != lastDisplayedHr) ||
+            (gRunning != lastRunning) ||
+            (displayTick >= DISPLAY_REFRESH_MS)) {
+
+                lastDisplayedHr = currentHr;
+                lastRunning = gRunning;
+                displayTick = 0;
+            }
+
+        // Millisecond
+        unint32_t currentMS = gStopwatchMs / 1U;
+        if ((currentMS != lastDisplayedMS) ||
+            (gRunning != lastRunning) ||
+            (displayTick >= DISPLAY_REFRESH_MS)) {
+
+                lastDisplayedMS = currentMS;
+                lastRunning = gRunning;
+                displayTick = 0;
+            }
     }
 }
 
@@ -165,7 +204,8 @@ static void setupButtons()
 // ============================================================================
 // Drawing functions
 // ============================================================================
-static void drawStopwatchScreen(tContext &context, uint32_t currentSec, bool running)
+// Update function to display HH:MM:SS:MS
+static void drawStopwatchScreen(tContext &context, uint32_t currentSec, uint32_t currentMin, uint32_t currentHr, uint32_t currentMS , bool running)
 {
     tRectangle rectFull = {0, 0, 127, 127};
     GrContextForegroundSet(&context, ClrBlack);
@@ -177,7 +217,7 @@ static void drawStopwatchScreen(tContext &context, uint32_t currentSec, bool run
 
     // Draw seconds counter centered
     char str[10];
-    snprintf(str, sizeof(str), "%02u s", currentSec);
+    snprintf(str, sizeof(str), "%02u:%02u:%02u:%02u", currentHr, currentMin, currentSec, currentMS);
 
     GrContextForegroundSet(&context, running ? ClrYellow : ClrOlive);
     GrStringDrawCentered(&context, str, -1, 64, 50, false);
